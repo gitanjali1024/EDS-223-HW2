@@ -1,0 +1,231 @@
+# Comparing Environmental Justice and Collision data across redlining HOLC grades
+
+In the late 1930s, the federal Home Owners' Loan Corporation (HOLC) drew "residential security" maps of American cities, grading neighborhoods by their supposed risk for mortgage lending. Neighborhoods were ranked from A ("Best") through B ("Still Desirable") and C ("Definitely Declining") to D ("Hazardous"), and the D areas, shaded red, gave the practice of redlining its name. In Los Angeles, as elsewhere, these grades were driven heavily by who lived in a neighborhood rather than by the condition of its housing. Residents of redlined neighborhoods found it far harder to buy, refinance, or improve homes, while federally backed lending flowed to white, often newly built A and B neighborhoods. Redlining was formally outlawed by the Fair Housing Act of 1968, but decades of it shaped the city: formerly redlined neighborhoods were more likely to be zoned for industry, more likely to have freeways routed through them, and less likely to receive investment in parks, trees, and safe streets. Because homeownership has been the main way American families build and pass on wealth, being shut out of it also had effects that carried across generations.
+
+This analysis asks whether those 1930s grades still line up with conditions in Los Angeles County today. It compares the four HOLC grades on three environmental justice indicators from the EPA's 2023 EJScreen dataset (the share of low-income residents, PM2.5 air pollution percentile, and low life expectancy percentile), and on bike and pedestrian collisions from California's Statewide Integrated Traffic Records System (SWITRS).
+
+## Load packages and read in the data
+```{r}
+#| warning: false
+#| message: false
+#| output: false
+
+library(sf)
+library(tmap)
+library(tidyverse)
+library(spData)
+```
+
+```{r}
+#| warning: false
+#| message: false
+#| output: false
+
+
+# Read in the data
+ejscreen <- sf::st_read(here::here("data", 
+"ejscreen","EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.gdb")) 
+
+crashes <- read_csv("data/SWITRS_LA/Crashes.csv")
+
+mapping_inequality <- st_read(
+  "data/mapping-inequality/mapping-inequality-los-angeles.json")
+
+mapping_inequality <- st_transform(mapping_inequality, st_crs(ejscreen))
+
+# Filter ejscreen to LA county
+LA <- ejscreen %>%
+  dplyr::filter(CNTY_NAME %in% c("Los Angeles County"))
+
+```
+
+## Map Redlining in Los Angeles
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 8
+#| out-width: "100%"
+
+
+
+# Create bounding box for area with mapping inequality data
+la_south <- st_bbox(c(xmin = -118.6, ymin = 33.70, xmax = -117.8, ymax = 34.3),
+                    crs = 4326)
+
+# Plot the data
+tm_shape(mapping_inequality, bbox = la_south) +
+    tm_polygons(fill = "grade",
+    lwd = 0.2,
+    fill.legend = tm_legend(title = "Redlining Grade")) +
+    tm_basemap("OpenStreetMap") +
+    tm_title("Redlining in Los Angeles County") +
+    tm_scalebar(position = c("left", "bottom")) +
+    tm_compass(position = c("left", "bottom")) 
+```
+
+The map shows the neighborhoods that HOLC graded in the Los Angeles area. Only the parts of the region that were already developed by the late 1930s received grades, so large areas of present-day Los Angeles County that were built later (much of the outer suburbs, for instance) have no HOLC grade. Those ungraded areas are excluded from the comparisons below, which means the results describe the historic urban core rather than the county as a whole.
+
+## Plot % Low Income, PM 2.5 Concentration and Low Life Expectancy Percentile by HOLC Grade
+```{r}
+#| warning: false
+#| message: false
+
+# Join ejscreen data with mapping inequality data
+data_joined <- st_join(LA, mapping_inequality)
+if (nrow(data_joined) != nrow(mapping_inequality)) {
+  warning(
+    "left join does not match original data. potential data loss during join")
+}
+
+# Drop geometries from the data
+data_dropped <- st_drop_geometry(data_joined)
+
+# Find the percentage of census block tracts in each grade
+redlining_grouped <- data_joined |> 
+    count(grade) |> 
+    mutate(pct = n / sum(n) * 100)
+
+```
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 7.5
+
+# Find mean low income percent per grade
+low_income <- data_dropped |> 
+    filter(!is.na(grade)) |>
+    summarize(mean_low_income = mean(LOWINCPCT, na.rm = TRUE), .by = grade)
+
+# Plot mean low income percent
+    ggplot(low_income, aes(x = grade, y = mean_low_income, fill = grade)) +
+    geom_col() +
+    labs(x = "HOLC grade",
+     y = "Mean Proportion low income", 
+     title = "Mean Low Income by HOLC Grade") +
+  theme_bw()
+```
+The plot of Mean Low Income by HOLC Grade shows a clear, step-by-step increase in the share of low-income residents as HOLC grade worsens. Block groups in A neighborhoods average about 15% low-income residents, followed by 24% in B, 34% in C, and 39% in D. In other words, the share of low-income residents in formerly redlined (D) neighborhoods is more than two and a half times that of A neighborhoods, nearly ninety years after the maps were drawn. Just as notable as the size of the gap is its consistency: each grade is worse off than the one above it, which is the pattern we would expect if the original grades set neighborhoods on different economic paths. This fits with how redlining worked. Families in C and D neighborhoods were largely denied the home loans that allowed families elsewhere to build equity, and that missing wealth, combined with decades of lower public and private investment, helps explain why these neighborhoods remain poorer today.
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 7.5
+
+# Find mean PM2.5 concentration per grade
+pm25 <- data_dropped |> 
+    filter(!is.na(grade)) |>
+    summarize(mean_pm25 = mean(P_PM25, na.rm = TRUE), .by = grade)
+
+# Plot mean PM2.5
+    ggplot(pm25, aes(x = grade, y = mean_pm25, fill = grade)) +
+    geom_col() +
+    labs(x = "HOLC grade", 
+    y = "Mean PM 2.5 (ppm) Percentile", 
+    title = "Mean PM2.5 Concentration by HOLC Grade") +
+  theme_bw()
+```
+The plot of Mean PM2.5 by HOLC Grade also shows a consistent increase across grades. These values are percentiles relative to all block groups in California rather than raw concentrations, so they describe how polluted each area is compared with the rest of the state. Every grade sits well above the statewide median, reflecting the Los Angeles basin's well-known air quality problems: heavy traffic, ports and goods movement, and geography that traps pollution. Even so, the ordering by grade holds. A neighborhoods average around the 73rd percentile, followed by B at the 76th, C at the 79th, and D at the 80th. The spread between A and D (about 7 percentile points) is much smaller than for income or life expectancy, which makes sense for a regional pollutant like PM2.5 that spreads widely across the basin. That the gradient still appears suggests that formerly redlined neighborhoods are more exposed to local pollution sources. This is consistent with the history described above, in which freeways, rail yards, and industrial land uses were more often placed in or near C and D neighborhoods.
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 7.5
+
+# Find mean low life expectancy per grade
+low_life_exp <- data_dropped |> 
+    filter(!is.na(grade)) |> 
+    summarize(mean_low_life_exp = mean(P_LIFEEXPPCT, na.rm = TRUE), .by = grade)
+
+# Plot mean low life expectancy
+    ggplot(low_life_exp, aes(x = grade, y = mean_low_life_exp, fill = grade)) +
+    geom_col() +
+    labs(x = "HOLC grade", 
+    y = "Mean Low Life Expectancy Percentile", 
+    title = "Mean Low Life Expectancy Percentile by HOLC Grade") +
+  theme_bw()
+```
+
+The plot of Mean Low Life Expectancy Percentile shows the strongest pattern of the three environmental justice indicators. Because this indicator measures *low* life expectancy, a higher percentile means residents tend to live shorter lives compared with the rest of California. A neighborhoods average the 24th percentile, B the 37th, C the 48th, and D the 53rd. That is a gap of nearly 30 percentile points between the best- and worst-graded neighborhoods, and it places A neighborhoods comfortably among the healthier parts of the state while D neighborhoods fall into the less healthy half. Life expectancy is shaped by many factors at once, including income, access to health care and healthy food, housing quality, stress, and environmental exposures such as air pollution and extreme heat. Its steep gradient across HOLC grades suggests that the disadvantages seen in the income and PM2.5 results, along with others not measured here, add up to real differences in how long people live.
+
+## Plot bike and pedestrian crashes by HOLC Grade
+```{r}
+#| warning: false
+#| message: false
+
+# Find NA's in Point X and Y
+sum(is.na(crashes$POINT_X))
+sum(is.na(crashes$POINT_Y))
+
+# Find NA's in Longitude and Latitude
+sum(is.na(crashes$LATITUDE))
+sum(is.na(crashes$LONGITUDE))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 7.5
+
+# Filter out NA's in Point X and Y columns, and select for bicycle and pedestrian accidents
+crashes2 <- crashes |> 
+  filter(!is.na(POINT_X)) |> 
+  filter(!is.na(POINT_Y)) |> 
+  filter(BICYCLE_ACCIDENT == "Y" | PEDESTRIAN_ACCIDENT == "Y")
+
+# Add geometry to crash data using Point X and Y
+crashes_transform <- st_as_sf(crashes2, 
+coords = c("POINT_X", "POINT_Y"), crs = 4326)
+
+# Check if CRS's match
+if(st_crs(crashes_transform) != st_crs(mapping_inequality)){
+  warning(
+    "coordinate refrence systems do not match")
+ crashes_crs_new <- st_transform(
+  crashes_transform, crs = st_crs(mapping_inequality))
+}
+
+# Join crash data with mapping inequality data
+crash_inequality <- st_join(
+  crashes_crs_new, mapping_inequality, join = st_within)
+
+# Find bike and pedestrian crashes by grade and plot
+crash_share <- crash_inequality |>
+  st_drop_geometry() |>
+  filter(!is.na(grade)) |>
+  summarize(
+    crashes    = n() + sum(NUMBER_KILLED),
+    .by = grade
+  ) |>
+  mutate(
+    `Bike & pedestrian crashes and fatalities` = crashes / sum(crashes) * 100,
+  ) |>
+  pivot_longer(c(`Bike & pedestrian crashes and fatalities`),
+               names_to = "measure", values_to = "pct")
+
+ggplot(crash_share, aes(x = grade, y = pct, fill = measure)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = paste0(round(pct, 1), "%")),
+            position = position_dodge(width = 0.9), vjust = -0.4, size = 3) +
+  scale_fill_manual(values = c("#d9533c")) +
+  labs(x = "HOLC grade", y = "% of total", fill = NULL,
+       title = 
+        "Share of bike and pedestrian crashes and fatalities by HOLC grade") +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+This plot shows that bike and pedestrian crashes and fatalities in graded neighborhoods are heavily concentrated in C and D areas, which together account for over 80% of the total, while A and B areas account for less than 20%. The measure combines the number of crashes with the number of people killed, so crashes that caused deaths count more heavily than non-fatal ones.
+
+These results should be read with some care, because they show each grade's *share* of all crashes rather than a crash *rate*. C neighborhoods were the most common grade on the Los Angeles map and C and D areas together cover a large share of the graded land, so some of the difference simply reflects how much area and how many people fall within each grade. Even so, the pattern is consistent with what is known about street design and travel in formerly redlined neighborhoods. Residents of lower-income neighborhoods are more likely to walk, bike, and take transit because they are less likely to own a car, which puts more people on foot and on bikes in harm's way. Many of these neighborhoods are also crossed by wide, high-speed arterial roads and freeway on- and off-ramps, and they have historically received less investment in crosswalks, bike lanes, lighting, and traffic calming. Taken together, the results suggest a meaningful inequality in traffic safety between historically redlined areas and the neighborhoods that HOLC once favored, though normalizing by area, population, or road length would be needed to confirm how large that gap truly is.
+
+## Interpretation and Analysis
+
+Across every measure examined here, the neighborhoods that HOLC rated as more "hazardous" in the 1930s are worse off today. Formerly redlined D neighborhoods have more than twice the share of low-income residents as A neighborhoods, somewhat higher exposure to fine particulate pollution, markedly lower life expectancy, and, together with C neighborhoods, the large majority of bike and pedestrian crashes and fatalities. Just as important as any single gap is the consistency of the pattern. For each of the three EJScreen indicators, conditions worsen step by step from A to B to C to D, the kind of graded relationship we would expect if the original maps helped set neighborhoods on different long-term paths.
+
+These findings fit with the history of how redlining operated. By cutting C and D neighborhoods off from mortgage credit, the HOLC maps and the lending practices built around them limited homeownership and wealth-building for the families who lived there, most of whom were people of color. Lower property values and political power then made these neighborhoods easier places to site freeways and industry, and harder places to win investment in parks, health care, and safe streets. Each of these effects would be expected to show up in exactly the measures studied here: income, air quality, health, and traffic safety. The size of the gaps varies by measure, with the smallest difference in PM2.5 (a pollutant that spreads across the whole basin) and the largest in life expectancy, which reflects many disadvantages piling up over a lifetime.
+
+There are important limitations to this analysis. The comparisons use group averages, which can hide large differences within each grade, and no statistical tests were run to judge whether the differences between grades are larger than would be expected by chance. The crash comparison reports shares rather than rates, so it does not yet account for differences in area, population, or traffic volume between grades. Natural next steps would be to calculate crash rates per resident or per mile of road, to test the differences between grades using a permutation test or similar method, and to add other indicators such as tree canopy, extreme heat, and proximity to hazardous facilities.
+
+Even with these caveats, the overall picture is clear and consistent. Nearly a century after HOLC drew its maps, and more than fifty years after redlining was outlawed, the neighborhoods marked as undesirable in Los Angeles are still poorer, more polluted, less healthy, and more dangerous for people walking and biking.
